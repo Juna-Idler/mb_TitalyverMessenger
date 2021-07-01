@@ -7,6 +7,8 @@ using System.IO.MemoryMappedFiles;
 using System.Threading;
 using System.Diagnostics;
 
+//using System.Text.Json;
+
 
 namespace Titalyver2
 {
@@ -24,14 +26,45 @@ namespace Titalyver2
 
         public enum EnumPlaybackEvent
         {
+            Bit_Play = 1,
+            Bit_Stop = 2,
+            Bit_Update = 4,
+            Bit_Seek = 8,
+
             NULL = 0,
-            PlayNew = 1,
+            Play = 1,
             Stop = 2,
-            PauseCancel = 3,
-            Pause = 4,
-            SeekPlaying = 5,
-            SeekPause = 6,
+
+            Update = 4,
+            UpdatePlay = 5,
+            UpdateStop = 6,
+
+            Seek = 8,
+            SeekPlay = 9,
+            SeekStop = 10,
+
+            SeekUpdate = 12,
+            SeekUpdatePlay = 13,
+            SeekUpdateStop = 14,
         };
+
+
+        public struct Data
+        {
+            public EnumPlaybackEvent PlaybackEvent; //イベント内容
+            public double SeekTime;  //イベントが発生した時の再生位置
+            public Int32 TimeOfDay; //イベントが発生した24時間周期のミリ秒単位の時刻
+
+            //メタデータ keyは小文字 複数の同一keyの可能性あり（なのでList<Pair>） Dic<string,string[]>とどっちがいいのか？
+            //文字列はstring それ以外はRawTextなstring
+            public Dictionary<string, string[]> MetaData;
+
+            //おそらく音楽ファイルの多分フルパス
+            public string FilePath;
+
+            public bool IsValid() => MetaData != null;
+        }
+
 
         public bool IsValid() { return Mutex != null; }
 
@@ -161,7 +194,7 @@ namespace Titalyver2
             base.Terminalize();
         }
 
-        public bool Update(EnumPlaybackEvent pb_event, double seek_time, byte[] json)
+        public bool Update(EnumPlaybackEvent pbevent, double seektime, byte[] json)
         {
             int size = 4 + 8 + 4 + 4 + json.Length;
 
@@ -172,18 +205,18 @@ namespace Titalyver2
                 using (MemoryMappedViewAccessor mmva = MemoryMappedFile.CreateViewAccessor(0, size, MemoryMappedFileAccess.ReadWrite))
                 {
                     Int64 offset = 0;
-                    mmva.Write(offset, (Int32)pb_event); offset += 4;
-                    mmva.Write(offset, seek_time); offset += 8;
+                    mmva.Write(offset, (Int32)pbevent); offset += 4;
+                    mmva.Write(offset, seektime); offset += 8;
                     mmva.Write(offset, GetTimeOfDay()); offset += 4;
                     mmva.Write(offset, json.Length); offset += 4;
-                    mmva.WriteArray(offset, json,0,json.Length); 
+                    mmva.WriteArray(offset, json, 0, json.Length);
                 }
 
                 _ = EventWaitHandle.Set();
             }
             return true;
         }
-	    public bool Update(EnumPlaybackEvent pb_event, double seek_time)
+	    public bool Update(EnumPlaybackEvent pbevent, double seektime)
         {
             int size = 4 + 8 + 4;
 
@@ -194,8 +227,8 @@ namespace Titalyver2
                 using (MemoryMappedViewAccessor mmva = MemoryMappedFile.CreateViewAccessor(0, size, MemoryMappedFileAccess.ReadWrite))
                 {
                     Int64 offset = 0;
-                    mmva.Write(offset, (Int32)pb_event); offset += 4;
-                    mmva.Write(offset, seek_time); offset += 8;
+                    mmva.Write(offset, (Int32)pbevent); offset += 4;
+                    mmva.Write(offset, seektime); offset += 8;
                     mmva.Write(offset, GetTimeOfDay());
                 }
                 _ = EventWaitHandle.Set();
@@ -209,4 +242,5 @@ namespace Titalyver2
         ~Messenger() { Terminalize(); }
 
     }
+
 }
