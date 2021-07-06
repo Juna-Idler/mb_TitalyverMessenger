@@ -88,7 +88,7 @@ namespace MusicBeePlugin
             about.TargetApplication = "";   //  the name of a Plugin Storage device or panel header for a dockable panel
             about.Type = PluginType.General;
             about.VersionMajor = 1;  // your plugin version
-            about.VersionMinor = 0;
+            about.VersionMinor = 1;
             about.Revision = 1;
             about.MinInterfaceVersion = MinInterfaceVersion;
             about.MinApiRevision = MinApiRevision;
@@ -184,8 +184,8 @@ namespace MusicBeePlugin
                         double p = mbApiInterface.Player_GetPosition() / 1000.0;
                         PlayState ps = mbApiInterface.Player_GetPlayState();
                         Titalyver2.Message.EnumPlaybackEvent pbe = ps == PlayState.Playing ?
-                            Titalyver2.Message.EnumPlaybackEvent.SeekUpdatePlay :
-                            Titalyver2.Message.EnumPlaybackEvent.SeekUpdate;
+                            Titalyver2.Message.EnumPlaybackEvent.SeekPlay :
+                            Titalyver2.Message.EnumPlaybackEvent.SeekStop;
 
                         using (var ms = new MemoryStream())
                         {
@@ -240,7 +240,11 @@ namespace MusicBeePlugin
                             serializer.WriteObject(ms, SendData);
                             byte[] json = ms.ToArray();
                             double p = mbApiInterface.Player_GetPosition() / 1000.0;
-                            Messenger.Update(Titalyver2.Message.EnumPlaybackEvent.Update, p, json);
+                            PlayState ps = mbApiInterface.Player_GetPlayState();
+                            Titalyver2.Message.EnumPlaybackEvent pbe = ps == PlayState.Playing ?
+                                Titalyver2.Message.EnumPlaybackEvent.SeekPlay :
+                                Titalyver2.Message.EnumPlaybackEvent.SeekStop;
+                            Messenger.Update(pbe, p, json);
                         }
                     }
                     break;
