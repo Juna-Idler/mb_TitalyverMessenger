@@ -15,6 +15,7 @@ using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 
 
+
 namespace MusicBeePlugin
 {
     public partial class Plugin
@@ -66,7 +67,10 @@ namespace MusicBeePlugin
         private MusicBeeApiInterface mbApiInterface;
         private PluginInfo about = new PluginInfo();
 
-        [DataContract]
+        private readonly System.Timers.Timer Timer = new System.Timers.Timer(1000.0) { AutoReset = false };
+        private const double MusicBee_Delay = 0.3;
+
+    [DataContract]
         private class JsonStruct
         {
             [DataMember]
@@ -130,6 +134,7 @@ namespace MusicBeePlugin
         // MusicBee is closing the plugin (plugin is being disabled by user or MusicBee is shutting down)
         public void Close(PluginCloseReason reason)
         {
+            Messenger.Update(Titalyver2.Message.EnumPlaybackEvent.Stop, 0);
             Messenger.Terminalize();
         }
 
@@ -155,6 +160,8 @@ namespace MusicBeePlugin
                             // ...
                             break;
                     }
+                    Timer.Elapsed += (s,a)=> { SendPlayMessage(); };
+
                     break;
                 case NotificationType.TrackChanged:
                     {
@@ -181,7 +188,6 @@ namespace MusicBeePlugin
                         data.meta.Add("lyrics", lyrics);
 
                         //曲の最後まで再生した場合PlayStateChangedが飛んでこない
-                        double p = mbApiInterface.Player_GetPosition() / 1000.0;
                         PlayState ps = mbApiInterface.Player_GetPlayState();
                         Titalyver2.Message.EnumPlaybackEvent pbe = ps == PlayState.Playing ?
                             Titalyver2.Message.EnumPlaybackEvent.SeekPlay :
@@ -193,6 +199,7 @@ namespace MusicBeePlugin
                             var serializer = new DataContractJsonSerializer(typeof(JsonStruct), settings);
                             serializer.WriteObject(ms, data);
                             byte[] json = ms.ToArray();
+                            double p = mbApiInterface.Player_GetPosition() / 1000.0 - MusicBee_Delay;
                             Messenger.Update(pbe, p, json);
                         }
                         SendData = data;
@@ -201,26 +208,7 @@ namespace MusicBeePlugin
                     break;
                 case NotificationType.PlayStateChanged:
                     {
-                        if (!Messenger.IsValid())
-                            return;
-                        double p = mbApiInterface.Player_GetPosition() / 1000.0;
-                        PlayState ps = mbApiInterface.Player_GetPlayState();
-                        switch (ps)
-                        {
-                            case PlayState.Undefined:
-                                break;
-                            case PlayState.Loading:
-                                break;
-                            case PlayState.Playing:
-                                Messenger.Update(Titalyver2.Message.EnumPlaybackEvent.SeekPlay, p);
-                                break;
-                            case PlayState.Paused:
-                                Messenger.Update(Titalyver2.Message.EnumPlaybackEvent.SeekStop, p);
-                                break;
-                            case PlayState.Stopped:
-                                Messenger.Update(Titalyver2.Message.EnumPlaybackEvent.Stop, p);
-                                break;
-                        }
+                        SendPlayMessage();
                     }
                     break;
                 case NotificationType.NowPlayingLyricsReady:
@@ -239,14 +227,42 @@ namespace MusicBeePlugin
                             var serializer = new DataContractJsonSerializer(typeof(JsonStruct), settings);
                             serializer.WriteObject(ms, SendData);
                             byte[] json = ms.ToArray();
-                            double p = mbApiInterface.Player_GetPosition() / 1000.0;
                             PlayState ps = mbApiInterface.Player_GetPlayState();
                             Titalyver2.Message.EnumPlaybackEvent pbe = ps == PlayState.Playing ?
                                 Titalyver2.Message.EnumPlaybackEvent.SeekPlay :
                                 Titalyver2.Message.EnumPlaybackEvent.SeekStop;
+                            double p = mbApiInterface.Player_GetPosition() / 1000.0 - MusicBee_Delay;
                             Messenger.Update(pbe, p, json);
                         }
                     }
+                    break;
+            }
+        }
+
+
+        private void SendPlayMessage()
+        {
+            if (!Messenger.IsValid())
+                return;
+            PlayState ps = mbApiInterface.Player_GetPlayState();
+            double p = mbApiInterface.Player_GetPosition() / 1000.0 - MusicBee_Delay;
+            switch (ps)
+            {
+                case PlayState.Undefined:
+                    break;
+                case PlayState.Loading:
+                    break;
+                case PlayState.Playing:
+                    Messenger.Update(Titalyver2.Message.EnumPlaybackEvent.SeekPlay, p);
+                    Timer.Start();
+                    break;
+                case PlayState.Paused:
+                    Messenger.Update(Titalyver2.Message.EnumPlaybackEvent.SeekStop, p);
+                    Timer.Stop();
+                    break;
+                case PlayState.Stopped:
+                    Messenger.Update(Titalyver2.Message.EnumPlaybackEvent.Stop, p);
+                    Timer.Stop();
                     break;
             }
         }

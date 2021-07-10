@@ -129,35 +129,26 @@ namespace Titalyver2
         {
             if (base.Initialize())
             {
-                using (MutexLock ml = new MutexLock(Mutex, 100))
+                try
                 {
-                    if (!ml.Result)
-                    {
-                        Terminalize();
-                        return false;
-                    }
-
                     try
                     {
-                        try
+                        using (MemoryMappedFile test = MemoryMappedFile.OpenExisting(MMF_Name))
                         {
-                            using (MemoryMappedFile test = MemoryMappedFile.OpenExisting(MMF_Name))
-                            {
-                                Terminalize();
-                                return false;
-                            }
+                            Terminalize();
+                            return false;
                         }
-                        catch (FileNotFoundException) { }
-                        MemoryMappedFile = MemoryMappedFile.CreateOrOpen(MMF_Name, MMF_MaxSize, MemoryMappedFileAccess.ReadWrite);
                     }
-                    catch (Exception e)
-                    {
-                        Terminalize();
-                        Debug.WriteLine(e.Message);
-                        return false;
-                    }
-                    return true;
+                    catch (FileNotFoundException) { }
+                    MemoryMappedFile = MemoryMappedFile.CreateOrOpen(MMF_Name, MMF_MaxSize, MemoryMappedFileAccess.ReadWrite);
                 }
+                catch (Exception e)
+                {
+                    Terminalize();
+                    Debug.WriteLine(e.Message);
+                    return false;
+                }
+                return true;
             }
             return false;
 
@@ -171,6 +162,7 @@ namespace Titalyver2
 
         public bool Update(EnumPlaybackEvent pbevent, double seektime, byte[] json)
         {
+            Int32 timeofday = GetTimeOfDay();
             int size = 4 + 8 + 4 + 4 + 4 + json.Length;
 
             using (MutexLock ml = new MutexLock(Mutex, 100))
@@ -179,7 +171,6 @@ namespace Titalyver2
                     return false;
                 using (MemoryMappedViewAccessor mmva = MemoryMappedFile.CreateViewAccessor(0, size, MemoryMappedFileAccess.ReadWrite))
                 {
-                    Int32 timeofday = GetTimeOfDay();
                     Int64 offset = 0;
                     mmva.Write(offset, (Int32)pbevent); offset += 4;
                     mmva.Write(offset, seektime); offset += 8;
@@ -195,6 +186,7 @@ namespace Titalyver2
         }
 	    public bool Update(EnumPlaybackEvent pbevent, double seektime)
         {
+            Int32 timeofday = GetTimeOfDay();
             int size = 4 + 8 + 4;
 
             using (MutexLock ml = new MutexLock(Mutex, 100))
@@ -206,7 +198,7 @@ namespace Titalyver2
                     Int64 offset = 0;
                     mmva.Write(offset, (Int32)pbevent); offset += 4;
                     mmva.Write(offset, seektime); offset += 8;
-                    mmva.Write(offset, GetTimeOfDay());
+                    mmva.Write(offset, timeofday);
                 }
                 _ = EventWaitHandle.Set();
             }
