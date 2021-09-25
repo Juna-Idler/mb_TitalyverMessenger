@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Linq;
 
 using System.IO;
 using System.IO.MemoryMappedFiles;
@@ -11,18 +12,8 @@ using System.Diagnostics;
 
 namespace Titalyver2
 {
-    public class Message
+    public class MMFMessage
     {
-        protected const UInt32 MMF_MaxSize = 1024 * 1024 * 64;
-
-        protected const string MMF_Name = "Titalyver Message Data MMF";
-        protected const string WriteEvent_Name = "Titalyver Message Write Event";
-        protected const string Mutex_Name = "Titalyver Message Mutex";
-
-        protected Mutex Mutex;
-        protected EventWaitHandle EventWaitHandle;
-
-
         public enum EnumPlaybackEvent
         {
             Bit_Play = 1,
@@ -39,6 +30,14 @@ namespace Titalyver2
         };
 
 
+        protected const UInt32 MMF_MaxSize = 1024 * 1024 * 64;
+
+        protected const string MMF_Name = "Titalyver Message Data MMF";
+        protected const string WriteEvent_Name = "Titalyver Message Write Event";
+        protected const string Mutex_Name = "Titalyver Message Mutex";
+
+        protected Mutex Mutex;
+        protected EventWaitHandle EventWaitHandle;
 
 
         public bool IsValid() { return Mutex != null; }
@@ -77,18 +76,23 @@ namespace Titalyver2
         }
 
 
-        public Message() {}
+        public MMFMessage() {}
 
-        ~Message() { Terminalize(); }
+        ~MMFMessage() { Terminalize(); }
 
         protected class MutexLock : IDisposable
         {
-            private readonly Mutex Mutex;
+            private Mutex Mutex;
             public bool Result { get; private set; }
             public MutexLock(Mutex mutex, int timeout_millisec)
             {
                 Mutex = mutex;
                 Result = mutex.WaitOne(timeout_millisec);
+            }
+            public void Unlock()
+            {
+                Mutex?.ReleaseMutex();
+                Mutex = null;
             }
 
             protected virtual void Dispose(bool disposing)
@@ -99,7 +103,7 @@ namespace Titalyver2
                 }
                 if (Result)
                 {
-                    Mutex.ReleaseMutex();
+                    Mutex?.ReleaseMutex();
                     Result = false;
                 }
             }
@@ -118,37 +122,47 @@ namespace Titalyver2
                 GC.SuppressFinalize(this);
             }
         }
-
-
     };
 
-    public class Messenger : Message
+    public class MMFMessenger : MMFMessage
     {
 	    private MemoryMappedFile MemoryMappedFile;
         public new bool Initialize()
         {
             if (base.Initialize())
             {
-                try
+                using (MutexLock ml = new MutexLock(Mutex, 100))
                 {
+                    if (!ml.Result)
+                    {
+                        ml.Unlock();
+                        Terminalize();
+                        return false;
+                    }
+
                     try
                     {
-                        using (MemoryMappedFile test = MemoryMappedFile.OpenExisting(MMF_Name))
+                        try
                         {
-                            Terminalize();
-                            return false;
+                            using (MemoryMappedFile test = MemoryMappedFile.OpenExisting(MMF_Name))
+                            {
+                                ml.Unlock();
+                                Terminalize();
+                                return false;
+                            }
                         }
+                        catch (FileNotFoundException) { }
+                        MemoryMappedFile = MemoryMappedFile.CreateOrOpen(MMF_Name, MMF_MaxSize, MemoryMappedFileAccess.ReadWrite);
                     }
-                    catch (FileNotFoundException) { }
-                    MemoryMappedFile = MemoryMappedFile.CreateOrOpen(MMF_Name, MMF_MaxSize, MemoryMappedFileAccess.ReadWrite);
+                    catch (Exception e)
+                    {
+                        ml.Unlock();
+                        Terminalize();
+                        Debug.WriteLine(e.Message);
+                        return false;
+                    }
+                    return true;
                 }
-                catch (Exception e)
-                {
-                    Terminalize();
-                    Debug.WriteLine(e.Message);
-                    return false;
-                }
-                return true;
             }
             return false;
 
@@ -160,9 +174,8 @@ namespace Titalyver2
             base.Terminalize();
         }
 
-        public bool Update(EnumPlaybackEvent pbevent, double seektime, byte[] json)
+        public bool Update(MMFMessage.EnumPlaybackEvent pbevent, double seektime, byte[] json)
         {
-            Int32 timeofday = GetTimeOfDay();
             int size = 4 + 8 + 4 + 4 + 4 + json.Length;
 
             using (MutexLock ml = new MutexLock(Mutex, 100))
@@ -171,6 +184,7 @@ namespace Titalyver2
                     return false;
                 using (MemoryMappedViewAccessor mmva = MemoryMappedFile.CreateViewAccessor(0, size, MemoryMappedFileAccess.ReadWrite))
                 {
+                    Int32 timeofday = GetTimeOfDay();
                     Int64 offset = 0;
                     mmva.Write(offset, (Int32)pbevent); offset += 4;
                     mmva.Write(offset, seektime); offset += 8;
@@ -184,9 +198,8 @@ namespace Titalyver2
             }
             return true;
         }
-	    public bool Update(EnumPlaybackEvent pbevent, double seektime)
+	    public bool Update(MMFMessage.EnumPlaybackEvent pbevent, double seektime)
         {
-            Int32 timeofday = GetTimeOfDay();
             int size = 4 + 8 + 4;
 
             using (MutexLock ml = new MutexLock(Mutex, 100))
@@ -198,7 +211,7 @@ namespace Titalyver2
                     Int64 offset = 0;
                     mmva.Write(offset, (Int32)pbevent); offset += 4;
                     mmva.Write(offset, seektime); offset += 8;
-                    mmva.Write(offset, timeofday);
+                    mmva.Write(offset, GetTimeOfDay());
                 }
                 _ = EventWaitHandle.Set();
             }
@@ -207,8 +220,9 @@ namespace Titalyver2
 
 
 
-        public Messenger() { }
-        ~Messenger() { Terminalize(); }
+        public MMFMessenger() { }
+        ~MMFMessenger() { Terminalize(); }
 
     }
+
 }
