@@ -64,18 +64,18 @@ namespace MusicBeePlugin
         }; 
 
         private Titalyver2.MMFMessenger Messenger = new Titalyver2.MMFMessenger();
+        private TitalyverG.WebsocketMessenger gMessenger = new TitalyverG.WebsocketMessenger();
         private MusicBeeApiInterface mbApiInterface;
         private PluginInfo about = new PluginInfo();
 
         private readonly System.Timers.Timer Timer = new System.Timers.Timer(1000.0) { AutoReset = false };
         private const double MusicBee_Delay = 0.3;
 
-    [DataContract]
-        private class JsonStruct
+        [DataContract]
+        public class JsonStruct
         {
             [DataMember]
             public string path;
-
             [DataMember]
             public string title;
             [DataMember]
@@ -101,9 +101,9 @@ namespace MusicBeePlugin
             about.Author = "Juna";
             about.TargetApplication = "";   //  the name of a Plugin Storage device or panel header for a dockable panel
             about.Type = PluginType.General;
-            about.VersionMajor = 1;  // your plugin version
-            about.VersionMinor = 1;
-            about.Revision = 1;
+            about.VersionMajor = 2;  // your plugin version
+            about.VersionMinor = 0;
+            about.Revision = 0;
             about.MinInterfaceVersion = MinInterfaceVersion;
             about.MinApiRevision = MinApiRevision;
             about.ReceiveNotifications = (ReceiveNotificationFlags.PlayerEvents | ReceiveNotificationFlags.TagEvents);
@@ -142,10 +142,16 @@ namespace MusicBeePlugin
         }
 
         // MusicBee is closing the plugin (plugin is being disabled by user or MusicBee is shutting down)
-        public void Close(PluginCloseReason reason)
+        public async void Close(PluginCloseReason reason)
         {
             Messenger.Update(Titalyver2.MMFMessage.EnumPlaybackEvent.Stop, 0);
             Messenger.Terminalize();
+
+            if (gMessenger.IsValid())
+            {
+                await gMessenger.Update(TitalyverG.WebsocketMessenger.EnumPlaybackEvent.Stop, 0);
+            }
+            gMessenger.Terminalize();
         }
 
         // uninstall this plugin - clean up any persisted files
@@ -163,6 +169,7 @@ namespace MusicBeePlugin
                 case NotificationType.PluginStartup:
                     // perform startup initialisation
                     Messenger.Initialize();
+                    gMessenger.Initialize();
                     switch (mbApiInterface.Player_GetPlayState())
                     {
                         case PlayState.Playing:
@@ -175,7 +182,7 @@ namespace MusicBeePlugin
                     break;
                 case NotificationType.TrackChanged:
                     {
-                        if (!Messenger.IsValid())
+                        if (!Messenger.IsValid() && !gMessenger.IsValid())
                             return;
 
                         string url = mbApiInterface.NowPlaying_GetFileUrl();
@@ -186,8 +193,10 @@ namespace MusicBeePlugin
                         string[] output;
                         mbApiInterface.NowPlaying_GetFileTags(metas, out output);
 
-                        JsonStruct data = new JsonStruct();
-                        data.path = url;
+                        JsonStruct data = new JsonStruct
+                        {
+                            path = url
+                        };
                         for (int i = 0; i < metas.Length; i++)
                         {
                             data.meta.Add(MetaNameDic[metas[i]], output[i]);
@@ -212,15 +221,17 @@ namespace MusicBeePlugin
                             Titalyver2.MMFMessage.EnumPlaybackEvent.SeekPlay :
                             Titalyver2.MMFMessage.EnumPlaybackEvent.SeekStop;
 
+                        double p = mbApiInterface.Player_GetPosition() / 1000.0 - MusicBee_Delay;
                         using (var ms = new MemoryStream())
                         {
                             var settings = new DataContractJsonSerializerSettings() { UseSimpleDictionaryFormat = true };
                             var serializer = new DataContractJsonSerializer(typeof(JsonStruct), settings);
                             serializer.WriteObject(ms, data);
                             byte[] json = ms.ToArray();
-                            double p = mbApiInterface.Player_GetPosition() / 1000.0 - MusicBee_Delay;
                             Messenger.Update(pbe, p, json);
                         }
+                        _ = gMessenger.Update((TitalyverG.WebsocketMessenger.EnumPlaybackEvent)pbe, p, data.path, data.title, data.artists, data.album, data.duration, data.meta);
+
                         SendData = data;
 
                     }
@@ -233,26 +244,27 @@ namespace MusicBeePlugin
                 case NotificationType.NowPlayingLyricsReady:
 // NowPlaying_GetDownloadedLyrics()を呼んで失敗（というか遅延？）したら飛んでくる（かもしれない）らしい
                     {
-                        if (!Messenger.IsValid())
+                        if (!Messenger.IsValid() && !gMessenger.IsValid())
                             return;
                         string lyrics = mbApiInterface.NowPlaying_GetDownloadedLyrics();
                         if (lyrics == null || lyrics == "")
                             return;
                         SendData.meta["lyrics"] = lyrics;
 
+                        PlayState ps = mbApiInterface.Player_GetPlayState();
+                        Titalyver2.MMFMessage.EnumPlaybackEvent pbe = ps == PlayState.Playing ?
+                        Titalyver2.MMFMessage.EnumPlaybackEvent.SeekPlay :
+                        Titalyver2.MMFMessage.EnumPlaybackEvent.SeekStop;
+                        double p = mbApiInterface.Player_GetPosition() / 1000.0 - MusicBee_Delay;
                         using (var ms = new MemoryStream())
                         {
                             var settings = new DataContractJsonSerializerSettings() { UseSimpleDictionaryFormat = true };
                             var serializer = new DataContractJsonSerializer(typeof(JsonStruct), settings);
                             serializer.WriteObject(ms, SendData);
                             byte[] json = ms.ToArray();
-                            PlayState ps = mbApiInterface.Player_GetPlayState();
-                            Titalyver2.MMFMessage.EnumPlaybackEvent pbe = ps == PlayState.Playing ?
-                                Titalyver2.MMFMessage.EnumPlaybackEvent.SeekPlay :
-                                Titalyver2.MMFMessage.EnumPlaybackEvent.SeekStop;
-                            double p = mbApiInterface.Player_GetPosition() / 1000.0 - MusicBee_Delay;
                             Messenger.Update(pbe, p, json);
                         }
+                        _ = gMessenger.Update((TitalyverG.WebsocketMessenger.EnumPlaybackEvent)pbe, p);
                     }
                     break;
             }
@@ -261,7 +273,7 @@ namespace MusicBeePlugin
 
         private void SendPlayMessage()
         {
-            if (!Messenger.IsValid())
+            if (!Messenger.IsValid() && !gMessenger.IsValid())
                 return;
             PlayState ps = mbApiInterface.Player_GetPlayState();
             double p = mbApiInterface.Player_GetPosition() / 1000.0 - MusicBee_Delay;
@@ -273,14 +285,17 @@ namespace MusicBeePlugin
                     break;
                 case PlayState.Playing:
                     Messenger.Update(Titalyver2.MMFMessage.EnumPlaybackEvent.SeekPlay, p);
+                    _ = gMessenger.Update(TitalyverG.WebsocketMessenger.EnumPlaybackEvent.SeekPlay, p);
                     Timer.Start();
                     break;
                 case PlayState.Paused:
                     Messenger.Update(Titalyver2.MMFMessage.EnumPlaybackEvent.SeekStop, p);
+                    _ = gMessenger.Update(TitalyverG.WebsocketMessenger.EnumPlaybackEvent.SeekStop, p);
                     Timer.Stop();
                     break;
                 case PlayState.Stopped:
                     Messenger.Update(Titalyver2.MMFMessage.EnumPlaybackEvent.Stop, p);
+                    _ = gMessenger.Update(TitalyverG.WebsocketMessenger.EnumPlaybackEvent.Stop, p);
                     Timer.Stop();
                     break;
             }
